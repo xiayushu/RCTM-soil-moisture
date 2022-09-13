@@ -1,0 +1,55 @@
+var Fieldname = ee.FeatureCollection("users/username/shapefiles/Fieldname"), //Customize field and user name
+    Fieldname_Point1 = /* color: #d63000 */ee.Geometry.Point([long1, lat1]), //Customize coordinates for point of interests
+    Fieldname_Point2 = /* color: #98ff00 */ee.Geometry.Point([long2, lat2]),
+    Fieldname_Point3 = /* color: #0b4a8b */ee.Geometry.Point([long3, lat3]),
+    data = ee.ImageCollection("users/username/Moisture/Layers/Fieldname"), //Customize pathway for obtaining the deposited soil moisture data layers
+    DAYMET = ee.ImageCollection("NASA/ORNL/DAYMET_V4");
+
+// Define buffers for point of interests
+var Fieldname_Point1_buffer = Fieldname_Point1.buffer(30);
+var Fieldname_Point2_buffer = Fieldname_Point2.buffer(30);
+var Fieldname_Point3_buffer = Fieldname_Point3.buffer(30);
+
+// Define area of interest; this can be either the whole field or the buffered point
+var ROI = Fieldname_Point1_buffer;//Point-based buffer
+//var ROI = Fieldname;//Whole field
+
+// Define time period of interests
+var data = data.filterDate('2019-01-01','2019-12-31')
+
+// Obtain moisture layers for different depth layers
+var data75 = data.filterMetadata('system:index', 'contains','75');//Customize depth; here 75 means 7.5 cm because of the error associated with '.' in folder name in GEE
+var data225 = data.filterMetadata('system:index', 'contains','225');//22.5 cm is stored as the folder 225
+var data45 = data.filterMetadata('system:index', 'contains','45');
+var data80 = data.filterMetadata('system:index', 'contains','80');
+
+// Process and join different moisture depth layers based on date
+var simpleJoin = ee.Join.inner();
+var filter = ee.Filter.equals({leftField: 'system:time_start', rightField: 'system:time_start'});
+var innerJoin_data = ee.ImageCollection(simpleJoin.apply(data75, data225, filter))
+var joined_data = innerJoin_data.map(function(feature) {return ee.Image.cat(feature.get('primary'), feature.get('secondary'));})
+var joined_data = joined_data.select([0,1],["0-15cm","15-30cm"])
+var innerJoin_data1 = ee.ImageCollection(simpleJoin.apply(joined_data, data45, filter))
+var joined_data2 = innerJoin_data1.map(function(feature) {return ee.Image.cat(feature.get('primary'), feature.get('secondary'));})
+var joined_data2 = joined_data2.select([0,1,2],["0-15cm","15-30cm","30-60cm"])
+var innerJoin_data2 = ee.ImageCollection(simpleJoin.apply(joined_data2, data80, filter))
+var joined_data3 = innerJoin_data2.map(function(feature) {return ee.Image.cat(feature.get('primary'), feature.get('secondary'));})
+var joined_data3 = joined_data3.select([0,1,2,3],["0-15cm","15-30cm","30-60cm","60-100cm"])
+
+// Comparison of moisture predicted at different depths
+// Mean through time
+print(ui.Chart.image.series(joined_data3, ROI, ee.Reducer.mean(),30).setOptions({
+              title: "Comparison of simulated soil moisture at different depths",
+              hAxis: {title: 'Date'}, vAxis: {title: 'Soil moisture (%)'}, 
+              series: {0: {color: '000000'}, 1:{color: 'FF0000'}, 2:{color: 'FF00FF'}, 3:{color: '008000'}}
+              }));
+// Standard deviation through time
+print(ui.Chart.image.series(joined_data3, ROI, ee.Reducer.stdDev(),30).setOptions({
+              title: "Comparison of simulated soil moisture at different depths",
+              hAxis: {title: 'Date'}, vAxis: {title: 'Soil moisture (%)'}, 
+              series: {0: {color: '000000'}, 1:{color: 'FF0000'}, 2:{color: 'FF00FF'}, 3:{color: '008000'}}
+              }));      
+// Examine results with precipitation pattern              
+var precipitation = DAYMET.select("prcp");
+var ppt = precipitation.filterDate('2019-01-01','2019-12-31');
+print(ui.Chart.image.series(ppt, ROI, ee.Reducer.mean(),30));

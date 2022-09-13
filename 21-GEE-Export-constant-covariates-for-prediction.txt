@@ -1,0 +1,112 @@
+var SRTM = ee.Image("USGS/SRTMGL1_003"),
+    HB = ee.FeatureCollection("users/pathway"), //Customize pathway for input
+    flowaccum = ee.Image("WWF/HydroSHEDS/15ACC"),
+    dem = ee.Image("WWF/HydroSHEDS/03VFDEM"),
+    roughness = ee.ImageCollection("projects/sat-io/open-datasets/Geomorpho90m/roughness"),
+    SoilGrid100 = ee.ImageCollection("projects/pathway"), //Customize pathway for soil inputs
+    nlcd2019 = ee.Image("users/pathway"), //Customize pathway for NLCD2019 inputs or use the new version and combine with the following
+    NLCD = ee.ImageCollection("USGS/NLCD_RELEASES/2016_REL");
+
+//Define study region
+var roi = HB;
+
+//Process terrain covariates
+var elevation = SRTM.select('elevation').rename("EL");
+var slope = ee.Terrain.slope(elevation).rename("SL");
+var aspect = ee.Terrain.aspect(elevation).rename("AS");
+var twi = (flowaccum.multiply(ee.Image(flowaccum.projection().nominalScale())
+            .divide(slope.multiply(ee.Image(Math.PI)).divide(ee.Image(180)).tan()))).log().rename('TWI');
+var rough = roughness.filterBounds(roi).mosaic().rename("surfrough");
+var TAGEE = require('users/joselucassafanelli/TAGEE:TAGEE-functions');
+var gaussianFilter = ee.Kernel.gaussian({
+  radius: 3, sigma: 2, units: 'pixels', normalize: true
+});
+var demSRTM = SRTM.convolve(gaussianFilter).resample("bilinear");
+var DEMAttributes = TAGEE.terrainAnalysis(TAGEE, demSRTM, roi);
+var mcurv = DEMAttributes.select("MeanCurvature").rename("mcurv");
+var hcurv = DEMAttributes.select("HorizontalCurvature").rename("hcurv");
+var vcurv = DEMAttributes.select("VerticalCurvature").rename("vcurv");
+
+//Process soil covariates
+var SoilGridSOC = SoilGrid100.filterMetadata("system:index", "contains", "soc")
+var SoilGridBD = SoilGrid100.filterMetadata("system:index", "contains", "bd")
+var SoilGridClay = SoilGrid100.filterMetadata("system:index", "contains", "clay")
+var SoilGridSand = SoilGrid100.filterMetadata("system:index", "contains", "sand")
+//SoilGrid depths: 0, 5, 15, 30, 60, 100, 200 cm
+var SOC5 = SoilGridSOC.filterMetadata("system:index", "contains", "d2").first().rename("SOC5")
+var BD5 = SoilGridBD.filterMetadata("system:index", "contains", "d2").first().rename("BD5")
+var Clay5 = SoilGridClay.filterMetadata("system:index", "contains", "d2").first().rename("Clay5")
+var Sand5 = SoilGridSand.filterMetadata("system:index", "contains", "d2").first().rename("Sand5")
+var SOC15 = SoilGridSOC.filterMetadata("system:index", "contains", "d3").first().rename("SOC15")
+var BD15 = SoilGridBD.filterMetadata("system:index", "contains", "d3").first().rename("BD15")
+var Clay15 = SoilGridClay.filterMetadata("system:index", "contains", "d3").first().rename("Clay15")
+var Sand15 = SoilGridSand.filterMetadata("system:index", "contains", "d3").first().rename("Sand15")
+var SOC30 = SoilGridSOC.filterMetadata("system:index", "contains", "d4").first().rename("SOC30")
+var BD30 = SoilGridBD.filterMetadata("system:index", "contains", "d4").first().rename("BD30")
+var Clay30 = SoilGridClay.filterMetadata("system:index", "contains", "d4").first().rename("Clay30")
+var Sand30 = SoilGridSand.filterMetadata("system:index", "contains", "d4").first().rename("Sand30")
+var SOC60 = SoilGridSOC.filterMetadata("system:index", "contains", "d5").first().rename("SOC60")
+var BD60 = SoilGridBD.filterMetadata("system:index", "contains", "d5").first().rename("BD60")
+var Clay60 = SoilGridClay.filterMetadata("system:index", "contains", "d5").first().rename("Clay60")
+var Sand60 = SoilGridSand.filterMetadata("system:index", "contains", "d5").first().rename("Sand60")
+var SOC100 = SoilGridSOC.filterMetadata("system:index", "contains", "d6").first().rename("SOC100")
+var BD100 = SoilGridBD.filterMetadata("system:index", "contains", "d6").first().rename("BD100")
+var Clay100 = SoilGridClay.filterMetadata("system:index", "contains", "d6").first().rename("Clay100")
+var Sand100 = SoilGridSand.filterMetadata("system:index", "contains", "d6").first().rename("Sand100")
+
+//Process land use land class data from NLCD
+//Most updated version of NLCD is available from: https://developers.google.com/earth-engine/datasets/catalog/USGS_NLCD_RELEASES_2019_REL_NLCD
+var nlcd = NLCD.select(0) 
+var NLCD2001 = nlcd.filterMetadata("system:index", "equals", "2001").first().rename("landcover2001")
+var NLCD2004 = nlcd.filterMetadata("system:index", "equals", "2004").first().rename("landcover2004")
+var NLCD2006 = nlcd.filterMetadata("system:index", "equals", "2006").first().rename("landcover2006")
+var NLCD2008 = nlcd.filterMetadata("system:index", "equals", "2008").first().rename("landcover2008")
+var NLCD2011 = nlcd.filterMetadata("system:index", "equals", "2011").first().rename("landcover2011")
+var NLCD2013 = nlcd.filterMetadata("system:index", "equals", "2013").first().rename("landcover2013")
+var NLCD2016 = nlcd.filterMetadata("system:index", "equals", "2016").first().rename("landcover2016")
+var NLCD2019= nlcd2019.rename("landcover2019")
+
+//Merge covariates
+var covariates = ee.Image.cat(elevation,slope,aspect,twi,rough,mcurv,hcurv,vcurv,
+                              SOC5,BD5,Clay5,Sand5,SOC15,BD15,Clay15,Sand15,SOC30,BD30,Clay30,Sand30,
+                              SOC60,BD60,Clay60,Sand60,SOC100,BD100,Clay100,Sand100,
+                              NLCD2001,NLCD2004,NLCD2006,NLCD2008,NLCD2011,NLCD2013,NLCD2016,NLCD2019)
+                        .set('system:time_start', ee.Date('2019-01-01').millis());
+var covCol = ee.ImageCollection([covariates]);
+
+//Add depth as a band for easier processing later on
+var getdepth = function (img){
+    var depth = 5;
+    return img.addBands(depth);
+};
+var constant = covCol.map(getdepth);
+
+//Combine all covariates and check potential missing data issue
+var Cov_All = constant.mosaic().clip(roi).toFloat();
+Map.addLayer(Cov_All)
+Map.centerObject(roi,12)
+
+//Gap-fill TWI or other covariates if needed
+var twicoarse = twi.clip(roi).reduceNeighborhood(ee.Reducer.mean(),ee.Kernel.square(5),"kernel",false,null)
+var twireplace = Cov_All.select("TWI").unmask(twicoarse).toFloat().clip(roi)
+
+//Recombine the dataset with filled value
+var covariates_filled = ee.Image.cat(elevation,slope,aspect,twireplace,rough,mcurv,hcurv,vcurv,
+                              SOC5,BD5,Clay5,Sand5,SOC15,BD15,Clay15,Sand15,SOC30,BD30,Clay30,Sand30,
+                              SOC60,BD60,Clay60,Sand60,SOC100,BD100,Clay100,Sand100,
+                              NLCD2001,NLCD2004,NLCD2006,NLCD2008,NLCD2011,NLCD2013,NLCD2016,NLCD2019)
+                        .set('system:time_start', ee.Date('2019-01-01').millis());
+var covCol_filled = ee.ImageCollection([covariates_filled]);
+var constant_filled = covCol_filled.map(getdepth);
+var Cov_All_filled = constant_filled.mosaic().clip(roi).toFloat();
+
+//Export generate covariate file to Google Cloud bucket
+Export.image.toCloudStorage({
+      image: Cov_All_filled,
+      bucket: 'rangelands', //Customize the bucket name
+      fileNamePrefix: 'Moisture/field_name/constant', //change file path based the name of location of ROI
+      scale: 30,
+      crs: 'EPSG:4326',
+      region: roi
+    });
+
